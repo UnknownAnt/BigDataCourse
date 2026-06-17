@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大数据分析看板</title>
+    <!-- 引入 ECharts（CDN） -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Microsoft YaHei", sans-serif;
+            background: #0f0f23;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+        header {
+            text-align: center;
+            padding: 2rem;
+            background: linear-gradient(135deg, #1a1a3e, #2d1b69);
+        }
+        header h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+        header p { color: #999; font-size: 0.9rem; }
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            width: 95%;
+            max-width: 1400px;
+            margin: 1.5rem auto;
+        }
+        .chart-container {
+            height: 450px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 1rem;
+        }
+        .chart-full {
+            grid-column: 1 / -1;
+        }
+
+        /* ======================================== */
+        /* 评论列表区域样式                            */
+        /* ======================================== */
+        #reviewListWrapper {
+            width: 95%;
+            max-width: 1400px;
+            margin: 0 auto 2rem auto;
+            display: none;  /* 默认隐藏 */
+        }
+        #reviewListWrapper.visible {
+            display: block;
+        }
+        .review-list-header {
+            padding: 1rem 0;
+            font-size: 1.1rem;
+            color: #e0e0e0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 1rem;
+        }
+        .review-list-header .count {
+            color: #7c4dff;
+            font-weight: bold;
+        }
+        #reviewList {
+            max-height: 500px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #reviewList::-webkit-scrollbar {
+            width: 6px;
+        }
+        #reviewList::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.05);
+            border-radius: 3px;
+        }
+        #reviewList::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+
+        .review-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            transition: background 0.2s ease;
+        }
+        .review-card:hover {
+            background: rgba(255,255,255,0.08);
+        }
+        .review-card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .sentiment-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+        }
+        .sentiment-positive {
+            background: #4caf50;
+        }
+        .sentiment-negative {
+            background: #f44336;
+        }
+        .sentiment-unknown {
+            background: #ff9800;
+        }
+        .review-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #ccc;
+            word-break: break-all;
+        }
+
+        /* 加载/提示/错误状态 */
+        .review-status {
+            text-align: center;
+            padding: 2rem 0;
+            font-size: 1rem;
+        }
+        .review-status.warning { color: #999; }
+        .review-status.error   { color: #f44336; }
+        .review-status.info    { color: #ff9800; }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255,255,255,0.2);
+            border-top-color: #7c4dff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            padding: 1.5rem;
+            color: #666;
+            font-size: 0.8rem;
+        }
+        @media (max-width: 768px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>📊 大数据分析看板</h1>
+        <p>Milestone 4 · 前后端分离架构 · FastAPI + ECharts</p>
+    </header>
+
+    <div class="dashboard-grid">
+        <!-- 图表1: 品类分布柱状图 -->
+        <div class="chart-container" id="categoryChart"></div>
+
+        <!-- 图表2: 情感分布堆叠柱状图 -->
+        <div class="chart-container" id="sentimentChart"></div>
+    </div>
+
+    <!-- 评论列表区域（点击柱状图后显示） -->
+    <div id="reviewListWrapper">
+        <div class="review-list-header" id="reviewListHeader"></div>
+        <div id="reviewList"></div>
+    </div>
+
+    <div class="footer">
+        <p>数据来源: online_shopping_10_cats.csv | 后端: FastAPI | 可视化: Apache ECharts</p>
+    </div>
+
+    <script>
+        // ========================================
+        // 全局状态 —— 评论下钻功能
+        // ========================================
+        let currentCategory = null;      // 当前展示的品类名
+        let debounceTimer = null;        // 防抖定时器
+        let abortController = null;      // 用于中断未完成的 fetch 请求
+
+        // ========================================
+        // 图表1: 品类分布柱状图（接口 A）+ 点击下钻
+        // ========================================
+        (function() {
+            const chart = echarts.init(document.getElementById('categoryChart'));
+
+            fetch('/api/category-distribution')
+                .then(res => res.json())
+                .then(data => {
+                    chart.setOption({
+                        title: {
+                            text: '商品品类分布（点击柱子查看评论）',
+                            left: 'center',
+                            textStyle: { color: '#e0e0e0', fontSize: 16 }
+                        },
+                        tooltip: {
+                            trigger: 'axis',
+                            axisPointer: { type: 'shadow' }
+                        },
+                        grid: { left: '3%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
+                        xAxis: {
+                            type: 'category',
+                            data: data.categories,
+                            axisLabel: { color: '#ccc', rotate: 30 }
+                        },
+                        yAxis: {
+                            type: 'value',
+                            name: '样本数量',
+                            axisLabel: { color: '#ccc' },
+                            nameTextStyle: { color: '#999' }
+                        },
+                        series: [{
+                            type: 'bar',
+                            data: data.counts,
+                            itemStyle: {
+                                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                    { offset: 0, color: '#7c4dff' },
+                                    { offset: 1, color: '#448aff' }
+                                ])
+                            },
+                            label: {
+                                show: true,
+                                position: 'top',
+                                color: '#ccc',
+                                fontSize: 11
+                            },
+                            // 点击高亮配置
+                            select: {
+                                itemStyle: {
+                                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                        { offset: 0, color: '#b388ff' },
+                                        { offset: 1, color: '#82b1ff' }
+                                    ])
+                                }
+                            }
+                        }]
+                    });
+
+                    // ---- 绑定点击事件（核心交互） ----
+                    chart.on('click', function(params) {
+                        // 参数有效性校验：非柱子区域点击时 params.name 可能为空
+                        if (!params || !params.name || params.componentType !== 'series') {
+                            return;
+                        }
+
+                        const catName = params.name;
+
+                        // 防抖处理：300ms 内连续点击仅触发最后一次
+                        if (debounceTimer) {
+                            clearTimeout(debounceTimer);
+                        }
+
+                        debounceTimer = setTimeout(() => {
+                            loadReviews(catName, chart);
+                        }, 300);
+                    });
+
+                })
+                .catch(err => {
+                    console.error('获取品类分布失败:', err);
+                    chart.setOption({
+                        title: { text: '加载失败', left: 'center', textStyle: { color: '#f44' } }
+                    });
+                });
+
+            window.addEventListener('resize', () => chart.resize());
+        })();
+
+        // ========================================
+        // 评论列表加载与渲染（核心函数）
+        // ========================================
+        function loadReviews(catName, chart) {
+            // 重复点击同一品类，不做任何操作
+            if (currentCategory === catName) {
+                return;
+            }
+
+            const wrapper = document.getElementById('reviewListWrapper');
+            const listEl  = document.getElementById('reviewList');
+            const headerEl = document.getElementById('reviewListHeader');
+
+            // 中断上一个未完成的请求
+            if (abortController) {
+                abortController.abort();
+            }
+            abortController = new AbortController();
+
+            // 更新当前品类 & 视觉反馈
+            currentCategory = catName;
+
+            // ECharts 视觉反馈：高亮被点击的柱子
+            chart.dispatchAction({ type: 'select', name: catName });
+
+            // 显示容器 + 加载动画
+            wrapper.classList.add('visible');
+            headerEl.innerHTML = '📋 <strong>' + catName + '</strong> 的评论列表（加载中…）';
+            listEl.innerHTML = '<div class="review-status info"><span class="loading-spinner"></span>正在加载评论数据…</div>';
+
+            // 调用接口 C
+            const url = '/api/reviews?cat=' + encodeURIComponent(catName) + '&limit=20';
+
+            fetch(url, { signal: abortController.signal })
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error('HTTP_' + res.status);
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    const total = result.total;
+                    const reviews = result.data;
+
+                    // 更新标题
+                    headerEl.innerHTML = '📋 <strong>' + catName + '</strong> 的评论列表（共 <span class="count">' + total + '</span> 条）';
+
+                    // 异常：该品类无评论数据
+                    if (total === 0 || reviews.length === 0) {
+                        listEl.innerHTML = '<div class="review-status warning">⚠️ 该品类暂无评论数据</div>';
+                        return;
+                    }
+
+                    // 渲染评论卡片
+                    listEl.innerHTML = '';
+                    reviews.forEach(function(r) {
+                        const card = document.createElement('div');
+                        card.className = 'review-card';
+
+                        // 情感标签徽章（缺失时降级为"未知"）
+                        const sentiment = r.sentiment || '未知';
+                        let badgeClass = 'sentiment-badge sentiment-unknown';
+                        if (sentiment === '正面') badgeClass = 'sentiment-badge sentiment-positive';
+                        else if (sentiment === '负面') badgeClass = 'sentiment-badge sentiment-negative';
+
+                        // 评论文本截断至 150 字符
+                        const reviewText = r.review || '';
+                        const truncated = reviewText.length > 150
+                            ? reviewText.substring(0, 150) + '…'
+                            : reviewText;
+
+                        card.innerHTML =
+                            '<div class="review-card-header">' +
+                                '<span class="' + badgeClass + '">' + sentiment + '</span>' +
+                            '</div>' +
+                            '<div class="review-text">' + escapeHtml(truncated) + '</div>';
+
+                        listEl.appendChild(card);
+                    });
+                })
+                .catch(err => {
+                    // 区分"用户主动中断"和真正的网络错误
+                    if (err.name === 'AbortError') {
+                        console.log('请求已被中断（用户点击了其他品类）');
+                        return;
+                    }
+                    // HTTP 错误（4xx/5xx）
+                    if (err.message && err.message.startsWith('HTTP_')) {
+                        const statusCode = err.message.replace('HTTP_', '');
+                        listEl.innerHTML = '<div class="review-status error">⚠️ 服务暂时不可用（状态码：' + statusCode + '），请稍后重试</div>';
+                    } else {
+                        // 网络请求失败
+                        listEl.innerHTML = '<div class="review-status error">❌ 数据加载失败，请检查网络连接后重试</div>';
+                    }
+                    headerEl.innerHTML = '📋 <strong>' + catName + '</strong> 的评论列表';
+                    currentCategory = null;  // 失败时重置，允许重试
+                });
+        }
+
+        // ========================================
+        // 辅助函数：HTML 转义（防 XSS）
+        // ========================================
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        // ========================================
+        // 图表2: 情感分布堆叠柱状图（接口 B）
+        // ========================================
+        (function() {
+            const chart = echarts.init(document.getElementById('sentimentChart'));
+
+            fetch('/api/sentiment-overview')
+                .then(res => res.json())
+                .then(result => {
+                    const data = result.data;
+                    // 提取所有情感类型（去重合并）
+                    const sentimentSet = new Set();
+                    data.forEach(d => Object.keys(d).forEach(k => {
+                        if (k !== 'category') sentimentSet.add(k);
+                    }));
+                    const sentiments = Array.from(sentimentSet);
+
+                    // 颜色映射
+                    const colorMap = {
+                        '正面': '#4caf50',
+                        '负面': '#f44336',
+                        '中性': '#ff9800'
+                    };
+
+                    const categories = data.map(d => d.category);
+                    const series = sentiments.map(s => ({
+                        name: s,
+                        type: 'bar',
+                        stack: 'total',
+                        emphasis: { focus: 'series' },
+                        data: data.map(d => d[s] || 0),
+                        itemStyle: { color: colorMap[s] || undefined }
+                    }));
+
+                    chart.setOption({
+                        title: {
+                            text: '各品类情感分布',
+                            left: 'center',
+                            textStyle: { color: '#e0e0e0', fontSize: 16 }
+                        },
+                        tooltip: {
+                            trigger: 'axis',
+                            axisPointer: { type: 'shadow' }
+                        },
+                        legend: {
+                            data: sentiments,
+                            top: 35,
+                            textStyle: { color: '#ccc' }
+                        },
+                        grid: { left: '3%', right: '4%', bottom: '15%', top: '20%', containLabel: true },
+                        xAxis: {
+                            type: 'category',
+                            data: categories,
+                            axisLabel: { color: '#ccc', rotate: 30 }
+                        },
+                        yAxis: {
+                            type: 'value',
+                            name: '评论数量',
+                            axisLabel: { color: '#ccc' },
+                            nameTextStyle: { color: '#999' }
+                        },
+                        series: series
+                    });
+                })
+                .catch(err => {
+                    console.error('获取情感分布失败:', err);
+                    chart.setOption({
+                        title: { text: '加载失败', left: 'center', textStyle: { color: '#f44' } }
+                    });
+                });
+
+            window.addEventListener('resize', () => chart.resize());
+        })();
+    </script>
+</body>
+</html>
