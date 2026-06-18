@@ -15,7 +15,7 @@ app = FastAPI(title="大数据分析看板 API")
 # ============================================================
 # 优先加载 LLM 增强宽表；若不存在则回退到原始数据集
 FEATURES_PATH = "../../实验十/batch_1000_features.csv"
-RAW_PATH = "../../实验九_大模型API接入与非结构化特征提取/data/online_shopping_10_cats.csv"
+RAW_PATH = "../../实验九/data/online_shopping_10_cats.csv"
 
 # 优先加载 LLM 增强宽表；若品类单一（如仅有"书籍"）则回退到原始数据集
 use_raw = True

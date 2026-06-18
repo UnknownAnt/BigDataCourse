@@ -39,7 +39,7 @@ BASE_URL = "https://api.siliconflow.cn/v1"
 MODEL_NAME = "deepseek-ai/DeepSeek-V4-Flash"
 
 DATA_PATH = os.path.join(os.path.dirname(__file__),
-                         "..", "实验九_大模型API接入与非结构化特征提取",
+                         "..", "实验九",
                          "data", "online_shopping_10_cats.csv")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 
@@ -85,7 +85,7 @@ def init_async_client() -> AsyncOpenAI:
         try:
             from dotenv import load_dotenv
             env_path = os.path.join(os.path.dirname(__file__),
-                                    "..", "实验九_大模型API接入与非结构化特征提取", ".env")
+                                    "..", "实验九", ".env")
             load_dotenv(env_path)
             api_key = os.getenv("SILICONFLOW_API_KEY")
         except ImportError:

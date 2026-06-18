@@ -27,7 +27,7 @@ app = FastAPI(title="大数据分析看板 API（增强版）")
 # 数据加载层
 # ============================================================
 FEATURES_PATH = "../../实验十/batch_1000_features.csv"
-RAW_PATH = "../../实验九_大模型API接入与非结构化特征提取/data/online_shopping_10_cats.csv"
+RAW_PATH = "../../实验九/data/online_shopping_10_cats.csv"
 
 use_raw = True
 df_features = None

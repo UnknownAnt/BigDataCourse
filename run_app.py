@@ -41,7 +41,7 @@ SERVER_FILE = DASHBOARD_DIR / "server.py"
 
 # 必要的数据文件（至少存在一个即可）
 REQUIRED_DATA_FILES = [
-    BASE_DIR / "实验九_大模型API接入与非结构化特征提取" / "data" / "online_shopping_10_cats.csv",
+    BASE_DIR / "实验九" / "data" / "online_shopping_10_cats.csv",
     BASE_DIR / "实验十一" / "online_shopping_10_cats (1).csv",
     BASE_DIR / "实验十" / "batch_1000_features.csv",
 ]

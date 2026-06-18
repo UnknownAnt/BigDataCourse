@@ -46,7 +46,7 @@ DEFAULT_CSV = os.path.join(BASE_DIR, "..", "实验十", "batch_1000_features.csv
 # 本实验目录下的原始数据集（cat + label + review，有正负标签）
 LOCAL_SOURCE_CSV = os.path.join(BASE_DIR, "online_shopping_10_cats (1).csv")
 # 原实验九目录下的数据集
-SOURCE_CSV = os.path.join(BASE_DIR, "..", "实验九_大模型API接入与非结构化特征提取",
+SOURCE_CSV = os.path.join(BASE_DIR, "..", "实验九",
                           "data", "online_shopping_10_cats.csv")
 
 # LLM 标签列（实验九提取的结构化特征）

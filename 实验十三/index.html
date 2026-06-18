@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大数据分析看板 · 多维交互联动</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <!-- ECharts WordCloud 扩展 -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts-wordcloud@2/dist/echarts-wordcloud.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, "Microsoft YaHei", sans-serif;
+            background: #0f0f23;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        /* ========== Header ========== */
+        header {
+            text-align: center;
+            padding: 1.2rem 2rem;
+            background: linear-gradient(135deg, #1a1a3e, #2d1b69);
+            position: relative;
+        }
+        header h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+        header p  { color: #999; font-size: 0.85rem; }
+
+        /* ========== 全局搜索栏 ========== */
+        .search-bar {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 0.75rem;
+            margin: 1rem auto 0 auto;
+            max-width: 600px;
+        }
+        .search-bar input {
+            flex: 1;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.08);
+            color: #e0e0e0;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .search-bar input:focus {
+            border-color: #7c4dff;
+        }
+        .search-bar input::placeholder {
+            color: #666;
+        }
+        .search-bar .search-hint {
+            font-size: 0.7rem;
+            color: #666;
+            white-space: nowrap;
+        }
+        .active-filters {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.5rem;
+            min-height: 1.5rem;
+        }
+        .filter-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            background: rgba(124,77,255,0.25);
+            color: #b388ff;
+        }
+        .filter-tag .clear-tag {
+            cursor: pointer;
+            font-weight: bold;
+            margin-left: 2px;
+            color: #ccc;
+        }
+        .filter-tag .clear-tag:hover { color: #f44; }
+
+        /* ========== Dashboard Grid ========== */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.2rem;
+            width: 95%;
+            max-width: 1400px;
+            margin: 1.2rem auto;
+        }
+        .chart-container {
+            height: 420px;
+            background: rgba(255,255,255,0.04);
+            border-radius: 12px;
+            padding: 0.5rem;
+            position: relative;
+        }
+        .chart-full {
+            grid-column: 1 / -1;
+        }
+
+        /* ========== Drill-down 返回按钮 ========== */
+        .drill-back-btn {
+            display: none;
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            z-index: 10;
+            padding: 4px 14px;
+            border-radius: 14px;
+            border: 1px solid #7c4dff;
+            background: rgba(124,77,255,0.2);
+            color: #b388ff;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .drill-back-btn:hover { background: rgba(124,77,255,0.4); }
+        .drill-back-btn.visible { display: inline-block; }
+
+        /* ========== Word Cloud Container ========== */
+        #wordCloudChart {
+            height: 300px;
+        }
+
+        /* ========== Review List ========== */
+        #reviewListWrapper {
+            width: 95%;
+            max-width: 1400px;
+            margin: 0 auto 2rem auto;
+            display: none;
+        }
+        #reviewListWrapper.visible { display: block; }
+
+        .review-list-header {
+            padding: 0.8rem 0;
+            font-size: 1rem;
+            color: #e0e0e0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            margin-bottom: 0.8rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .review-list-header .count { color: #7c4dff; font-weight: bold; }
+
+        #reviewList {
+            max-height: 450px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        #reviewList::-webkit-scrollbar { width: 6px; }
+        #reviewList::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); border-radius: 3px; }
+        #reviewList::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+
+        .review-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 8px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            transition: background 0.2s;
+        }
+        .review-card:hover { background: rgba(255,255,255,0.08); }
+
+        .review-card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .sentiment-badge {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+        }
+        .sentiment-positive { background: #4caf50; }
+        .sentiment-negative { background: #f44336; }
+        .sentiment-unknown  { background: #ff9800; }
+
+        .review-text {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #ccc;
+            word-break: break-all;
+        }
+
+        .review-status {
+            text-align: center;
+            padding: 2rem 0;
+            font-size: 1rem;
+        }
+        .review-status.warning { color: #999; }
+        .review-status.error   { color: #f44336; }
+        .review-status.info    { color: #ff9800; }
+
+        .loading-spinner {
+            display: inline-block;
+            width: 24px; height: 24px;
+            border: 3px solid rgba(255,255,255,0.2);
+            border-top-color: #7c4dff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .footer {
+            text-align: center;
+            padding: 1.2rem;
+            color: #555;
+            font-size: 0.75rem;
+        }
+
+        @media (max-width: 768px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ========== Header ========== -->
+<header>
+    <h1>📊 大数据分析看板 · 多维交互联动</h1>
+    <p>Milestone 4 · 实验十三 · 双向联动 + 维度下钻 + 词云 + 正则检索</p>
+    <div class="search-bar">
+        <input type="text" id="searchInput"
+               placeholder="🔍 正则检索（如 ^苹果|iphone 或 [差烂]）—— 支持正则表达式">
+        <span class="search-hint">防抖 400ms</span>
+    </div>
+    <div class="active-filters" id="activeFilters"></div>
+</header>
+
+<!-- ========== Chart Grid ========== -->
+<div class="dashboard-grid">
+    <!-- 图表1: 品类分布柱状图（支持下钻） -->
+    <div style="position:relative;">
+        <div class="chart-container" id="categoryChart"></div>
+        <button class="drill-back-btn" id="drillBackBtn" onclick="drillBackUp()">← 返回上一级</button>
+    </div>
+
+    <!-- 图表2: 情感分布堆叠柱状图 -->
+    <div class="chart-container" id="sentimentChart"></div>
+</div>
+
+<!-- 词云图（全宽） -->
+<div class="dashboard-grid">
+    <div class="chart-container chart-full" id="wordCloudChart"></div>
+</div>
+
+<!-- 评论列表 -->
+<div id="reviewListWrapper">
+    <div class="review-list-header" id="reviewListHeader"></div>
+    <div id="reviewList"></div>
+</div>
+
+<div class="footer">
+    <p>数据来源: online_shopping_10_cats.csv | 后端: FastAPI | 可视化: Apache ECharts + echarts-wordcloud</p>
+</div>
+
+<!-- ================================================================ -->
+<!--  JavaScript: 全局状态机 + 多维联动 + 下钻 + 词云 + 防抖检索        -->
+<!-- ================================================================ -->
+<script>
+// ============================================================
+// 【状态机】全局状态对象 —— 所有图表的数据源由它统一驱动
+// ============================================================
+const dashboardState = {
+    category: null,        // 当前选中品类（null = 全部）
+    sentiment: "",         // 当前选中情感（"" = 全部）
+    searchQuery: "",       // 当前正则检索关键词
+    drilldownActive: false,// 是否处于下钻状态
+    currentDrillCat: null, // 下钻目标品类名
+};
+
+// ============================================================
+// 图表实例引用（全局，供联动函数使用）
+// ============================================================
+let categoryChartInst = null;
+let sentimentChartInst = null;
+let wordCloudChartInst = null;
+
+// ============================================================
+// 请求控制
+// ============================================================
+let abortController = null;   // fetch AbortController
+let debounceTimer = null;     // 搜索框防抖定时器
+let lastReviewCat = null;     // 评论列表当前展示的品类（防重复刷新）
+
+// ============================================================
+// 工具函数：防抖封装
+// ============================================================
+function debounce(fn, delay) {
+    let timer = null;
+    return function(...args) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => fn.apply(this, args), delay);
+    };
+}
+
+// ============================================================
+// 工具函数：HTML 转义
+// ============================================================
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(text));
+    return div.innerHTML;
+}
+
+// ============================================================
+// 【核心】统一数据刷新 —— 根据 dashboardState 刷新所有图表
+// ============================================================
+function refreshAllCharts() {
+    renderActiveFilters();
+    refreshCategoryChart();
+    refreshSentimentChart();
+    refreshWordCloud();
+    // 如果有筛选条件，自动展示评论列表
+    if (dashboardState.category || dashboardState.sentiment || dashboardState.searchQuery) {
+        refreshReviewList();
+    }
+}
+
+// ============================================================
+// 活跃过滤器标签渲染
+// ============================================================
+function renderActiveFilters() {
+    const container = document.getElementById('activeFilters');
+    const tags = [];
+    if (dashboardState.category) {
+        tags.push({ label: '品类: ' + dashboardState.category, key: 'category' });
+    }
+    if (dashboardState.sentiment) {
+        tags.push({ label: '情感: ' + dashboardState.sentiment, key: 'sentiment' });
+    }
+    if (dashboardState.searchQuery) {
+        tags.push({ label: '搜索: ' + dashboardState.searchQuery, key: 'searchQuery' });
+    }
+    if (dashboardState.drilldownActive) {
+        tags.push({ label: '下钻: ' + dashboardState.currentDrillCat, key: 'drilldown' });
+    }
+    if (tags.length === 0) {
+        container.innerHTML = '<span style="color:#555;font-size:0.75rem;">当前无筛选条件 · 展示全量数据</span>';
+        return;
+    }
+    container.innerHTML = tags.map(t =>
+        '<span class="filter-tag">' + t.label +
+        '<span class="clear-tag" onclick="clearFilter(\'' + t.key + '\')">✕</span>' +
+        '</span>'
+    ).join('');
+}
+
+function clearFilter(key) {
+    if (key === 'category') {
+        dashboardState.category = null;
+        dashboardState.drilldownActive = false;
+        dashboardState.currentDrillCat = null;
+        lastReviewCat = null;
+        document.getElementById('drillBackBtn').classList.remove('visible');
+    } else if (key === 'sentiment') {
+        dashboardState.sentiment = '';
+    } else if (key === 'searchQuery') {
+        dashboardState.searchQuery = '';
+        document.getElementById('searchInput').value = '';
+    } else if (key === 'drilldown') {
+        drillBackUp();
+        return;
+    }
+    refreshAllCharts();
+}
+
+// ============================================================
+// 图表1: 品类分布柱状图（支持下钻 + 点击联动）
+// ============================================================
+function refreshCategoryChart() {
+    if (!categoryChartInst) {
+        categoryChartInst = echarts.init(document.getElementById('categoryChart'));
+        // 事件绑定仅初始化一次！（关键：避免重复绑定）
+        bindCategoryChartEvents();
+    }
+
+    let url, title;
+    if (dashboardState.drilldownActive && dashboardState.currentDrillCat) {
+        // 下钻模式：显示子维度
+        url = '/api/sub-category-stats?cat=' + encodeURIComponent(dashboardState.currentDrillCat);
+        title = dashboardState.currentDrillCat + ' · 子维度分布（下钻视图）';
+        document.getElementById('drillBackBtn').classList.add('visible');
+    } else {
+        // 普通模式：显示品类分布
+        let params = '';
+        if (dashboardState.sentiment) {
+            params = '?sentiment=' + encodeURIComponent(dashboardState.sentiment);
+        }
+        url = '/api/category-distribution' + params;
+        title = '商品品类分布（点击柱子下钻 / 联动情感）';
+        document.getElementById('drillBackBtn').classList.remove('visible');
+    }
+
+    categoryChartInst.showLoading({ text: '加载中...', color: '#7c4dff', maskColor: 'rgba(0,0,0,0.3)' });
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            categoryChartInst.hideLoading();
+            categoryChartInst.setOption({
+                title: {
+                    text: title,
+                    left: 'center',
+                    textStyle: { color: '#e0e0e0', fontSize: 14 }
+                },
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                grid: { left: '3%', right: '4%', bottom: '12%', top: '15%', containLabel: true },
+                xAxis: {
+                    type: 'category',
+                    data: data.categories,
+                    axisLabel: { color: '#ccc', rotate: 30, fontSize: 11 }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '数量',
+                    axisLabel: { color: '#ccc' },
+                    nameTextStyle: { color: '#999' }
+                },
+                series: [{
+                    type: 'bar',
+                    data: data.counts,
+                    itemStyle: {
+                        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                            { offset: 0, color: '#7c4dff' },
+                            { offset: 1, color: '#448aff' }
+                        ])
+                    },
+                    label: { show: true, position: 'top', color: '#ccc', fontSize: 11 },
+                    select: {
+                        itemStyle: {
+                            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                                { offset: 0, color: '#b388ff' },
+                                { offset: 1, color: '#82b1ff' }
+                            ])
+                        }
+                    }
+                }]
+            }, true);  // notMerge=true —— 非合并模式，彻底清理旧配置
+        })
+        .catch(err => {
+            console.error('获取品类分布失败:', err);
+            categoryChartInst.hideLoading();
+        });
+}
+
+function bindCategoryChartEvents() {
+    // 点击事件 —— 只绑定一次
+    categoryChartInst.on('click', function(params) {
+        if (!params || !params.name || params.componentType !== 'series') return;
+
+        const clickedName = params.name;
+
+        if (dashboardState.drilldownActive) {
+            // 下钻模式：点击子维度 → 设置搜索词过滤
+            dashboardState.searchQuery = clickedName;
+            document.getElementById('searchInput').value = clickedName;
+            refreshAllCharts();
+        } else {
+            // 普通模式：点击品类 → 触发下钻
+            // 先检查是否重复点击同一品类
+            if (dashboardState.currentDrillCat === clickedName && dashboardState.drilldownActive) {
+                return; // 已经是下钻状态，不重复操作
+            }
+
+            // 进入下钻
+            dashboardState.drilldownActive = true;
+            dashboardState.currentDrillCat = clickedName;
+            dashboardState.category = clickedName;
+            lastReviewCat = null;  // 重置，确保评论刷新
+            refreshAllCharts();
+        }
+    });
+}
+
+// ============================================================
+// 下钻返回上一级
+// ============================================================
+function drillBackUp() {
+    dashboardState.drilldownActive = false;
+    dashboardState.currentDrillCat = null;
+    dashboardState.category = null;
+    lastReviewCat = null;
+    document.getElementById('drillBackBtn').classList.remove('visible');
+    refreshAllCharts();
+}
+
+// ============================================================
+// 图表2: 情感分布堆叠柱状图（支持点击联动 + 品类过滤）
+// ============================================================
+function refreshSentimentChart() {
+    if (!sentimentChartInst) {
+        sentimentChartInst = echarts.init(document.getElementById('sentimentChart'));
+        // 事件绑定仅初始化一次！
+        bindSentimentChartEvents();
+    }
+
+    let params = '';
+    if (dashboardState.category) {
+        params = '?cat=' + encodeURIComponent(dashboardState.category);
+    }
+    const url = '/api/sentiment-overview' + params;
+
+    sentimentChartInst.showLoading({ text: '加载中...', color: '#7c4dff', maskColor: 'rgba(0,0,0,0.3)' });
+
+    fetch(url)
+        .then(res => res.json())
+        .then(result => {
+            sentimentChartInst.hideLoading();
+            const data = result.data;
+            const sentimentSet = new Set();
+            data.forEach(d => Object.keys(d).forEach(k => {
+                if (k !== 'category') sentimentSet.add(k);
+            }));
+            const sentiments = Array.from(sentimentSet);
+
+            const colorMap = {
+                '正面': '#4caf50',
+                '负面': '#f44336',
+                '中性': '#ff9800'
+            };
+
+            const categories = data.map(d => d.category);
+            const series = sentiments.map(s => ({
+                name: s,
+                type: 'bar',
+                stack: 'total',
+                emphasis: { focus: 'series' },
+                data: data.map(d => d[s] || 0),
+                itemStyle: { color: colorMap[s] || undefined }
+            }));
+
+            const titleText = dashboardState.category
+                ? dashboardState.category + ' · 情感分布（品类过滤）'
+                : '各品类情感分布（点击色块联动品类）';
+
+            sentimentChartInst.setOption({
+                title: {
+                    text: titleText,
+                    left: 'center',
+                    textStyle: { color: '#e0e0e0', fontSize: 14 }
+                },
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+                legend: {
+                    data: sentiments,
+                    top: 35,
+                    textStyle: { color: '#ccc' },
+                    selected: dashboardState.sentiment
+                        ? Object.fromEntries(sentiments.map(s => [s, s === dashboardState.sentiment]))
+                        : undefined
+                },
+                grid: { left: '3%', right: '4%', bottom: '12%', top: '20%', containLabel: true },
+                xAxis: {
+                    type: 'category',
+                    data: categories,
+                    axisLabel: { color: '#ccc', rotate: 30, fontSize: 11 }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: '评论数量',
+                    axisLabel: { color: '#ccc' },
+                    nameTextStyle: { color: '#999' }
+                },
+                series: series
+            }, true);  // notMerge=true
+        })
+        .catch(err => {
+            console.error('获取情感分布失败:', err);
+            sentimentChartInst.hideLoading();
+        });
+}
+
+function bindSentimentChartEvents() {
+    // 点击堆叠柱状图的色块区域
+    sentimentChartInst.on('click', function(params) {
+        if (!params || !params.seriesName) return;
+
+        // params.seriesName 是情感类型（"正面"/"负面"）
+        // params.name 是品类名
+
+        const clickedSentiment = params.seriesName;
+        const clickedCategory = params.name;
+
+        // 联动逻辑：点击负面/正面 → 设置 sentiment 过滤 + 品类过滤
+        if (dashboardState.sentiment === clickedSentiment &&
+            dashboardState.category === clickedCategory) {
+            // 重复点击 → 清除过滤
+            dashboardState.sentiment = '';
+            dashboardState.category = null;
+            lastReviewCat = null;
+        } else {
+            dashboardState.sentiment = clickedSentiment;
+            dashboardState.category = clickedCategory;
+            lastReviewCat = null;
+        }
+
+        // 清除下钻状态
+        dashboardState.drilldownActive = false;
+        dashboardState.currentDrillCat = null;
+
+        refreshAllCharts();
+    });
+}
+
+// ============================================================
+// 图表3: 词云图（异步自适应）
+// ============================================================
+function refreshWordCloud() {
+    if (!wordCloudChartInst) {
+        wordCloudChartInst = echarts.init(document.getElementById('wordCloudChart'));
+        // 词云点击事件 —— 仅绑定一次
+        wordCloudChartInst.on('click', function(params) {
+            if (!params || !params.name) return;
+            // 点击词 → 追加到搜索框
+            const currentVal = document.getElementById('searchInput').value.trim();
+            const clickedWord = params.name;
+            if (!currentVal.includes(clickedWord)) {
+                const newVal = currentVal ? currentVal + '|' + clickedWord : clickedWord;
+                document.getElementById('searchInput').value = newVal;
+                dashboardState.searchQuery = newVal;
+                refreshAllCharts();
+            }
+        });
+    }
+
+    // 构建请求参数
+    const params = new URLSearchParams();
+    if (dashboardState.category) params.set('cat', dashboardState.category);
+    if (dashboardState.sentiment) params.set('sentiment', dashboardState.sentiment);
+    if (dashboardState.searchQuery) params.set('query', dashboardState.searchQuery);
+    params.set('top_n', '60');
+
+    wordCloudChartInst.showLoading({ text: '生成词云...', color: '#7c4dff', maskColor: 'rgba(0,0,0,0.3)' });
+
+    fetch('/api/keywords?' + params.toString())
+        .then(res => res.json())
+        .then(result => {
+            wordCloudChartInst.hideLoading();
+            const words = result.data;
+
+            if (words.length === 0) {
+                wordCloudChartInst.setOption({
+                    title: {
+                        text: '当前筛选条件下无足够文本数据',
+                        left: 'center', top: 'center',
+                        textStyle: { color: '#666', fontSize: 16 }
+                    }
+                }, true);
+                return;
+            }
+
+            const maxValue = words[0]?.value || 1;
+            const minValue = words[words.length - 1]?.value || 1;
+
+            wordCloudChartInst.setOption({
+                title: {
+                    text: '高频词云（点击词语追加到搜索框）',
+                    left: 'center',
+                    textStyle: { color: '#e0e0e0', fontSize: 14 }
+                },
+                tooltip: {
+                    show: true,
+                    formatter: function(p) {
+                        return p.name + ': ' + p.value + ' 次';
+                    }
+                },
+                series: [{
+                    type: 'wordCloud',
+                    shape: 'circle',
+                    left: 'center',
+                    top: 'center',
+                    width: '90%',
+                    height: '85%',
+                    sizeRange: [14, 50],
+                    rotationRange: [-45, 45],
+                    rotationStep: 45,
+                    gridSize: 8,
+                    drawOutOfBound: false,
+                    layoutAnimation: true,
+                    textStyle: {
+                        fontFamily: 'Microsoft YaHei, sans-serif',
+                        fontWeight: 'normal',
+                        color: function() {
+                            const colors = [
+                                '#7c4dff', '#448aff', '#4caf50', '#f44336',
+                                '#ff9800', '#00bcd4', '#e91e63', '#ffeb3b',
+                                '#9c27b0', '#3f51b5', '#009688', '#ff5722'
+                            ];
+                            return colors[Math.floor(Math.random() * colors.length)];
+                        }
+                    },
+                    emphasis: {
+                        focus: 'self',
+                        textStyle: { textShadowBlur: 10, textShadowColor: '#333' }
+                    },
+                    data: words.map(function(w) {
+                        return {
+                            name: w.name,
+                            value: w.value
+                        };
+                    })
+                }]
+            }, true);
+        })
+        .catch(err => {
+            console.error('获取词云数据失败:', err);
+            wordCloudChartInst.hideLoading();
+        });
+}
+
+// ============================================================
+// 评论列表刷新
+// ============================================================
+function refreshReviewList() {
+    // 中断旧请求
+    if (abortController) {
+        abortController.abort();
+    }
+    abortController = new AbortController();
+
+    const wrapper = document.getElementById('reviewListWrapper');
+    const listEl  = document.getElementById('reviewList');
+    const headerEl = document.getElementById('reviewListHeader');
+
+    // 构建参数
+    const params = new URLSearchParams();
+    if (dashboardState.category) params.set('cat', dashboardState.category);
+    if (dashboardState.sentiment) params.set('sentiment', dashboardState.sentiment);
+    if (dashboardState.searchQuery) params.set('query', dashboardState.searchQuery);
+    params.set('limit', '20');
+
+    wrapper.classList.add('visible');
+    headerEl.innerHTML = '📋 评论列表（加载中…）';
+    listEl.innerHTML = '<div class="review-status info"><span class="loading-spinner"></span>正在加载评论数据…</div>';
+
+    const url = '/api/reviews?' + params.toString();
+
+    fetch(url, { signal: abortController.signal })
+        .then(res => {
+            if (!res.ok) throw new Error('HTTP_' + res.status);
+            return res.json();
+        })
+        .then(result => {
+            const total = result.total;
+            const reviews = result.data;
+
+            // 标题
+            let titleParts = ['📋 评论列表'];
+            if (dashboardState.category) titleParts.push('品类: ' + dashboardState.category);
+            if (dashboardState.sentiment) titleParts.push('情感: ' + dashboardState.sentiment);
+            if (dashboardState.searchQuery) titleParts.push('搜索: ' + dashboardState.searchQuery);
+            headerEl.innerHTML = titleParts.join(' · ') +
+                '（共 <span class="count">' + total + '</span> 条）';
+
+            if (total === 0 || reviews.length === 0) {
+                listEl.innerHTML = '<div class="review-status warning">⚠️ 当前筛选条件下无匹配评论</div>';
+                return;
+            }
+
+            listEl.innerHTML = '';
+            reviews.forEach(function(r) {
+                const card = document.createElement('div');
+                card.className = 'review-card';
+
+                const sentiment = r.sentiment || '未知';
+                let badgeClass = 'sentiment-badge sentiment-unknown';
+                if (sentiment === '正面') badgeClass = 'sentiment-badge sentiment-positive';
+                else if (sentiment === '负面') badgeClass = 'sentiment-badge sentiment-negative';
+
+                const reviewText = r.review || '';
+                const truncated = reviewText.length > 150
+                    ? reviewText.substring(0, 150) + '…'
+                    : reviewText;
+
+                // 高亮搜索关键词
+                let displayText = escapeHtml(truncated);
+                if (dashboardState.searchQuery) {
+                    try {
+                        const escapedQuery = dashboardState.searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const regex = new RegExp('(' + escapedQuery + ')', 'gi');
+                        displayText = escapeHtml(truncated).replace(
+                            new RegExp('(' + escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi'),
+                            '<mark style="background:#7c4dff;color:#fff;padding:0 2px;border-radius:2px;">$1</mark>'
+                        );
+                    } catch(e) {
+                        // 降级
+                    }
+                }
+
+                card.innerHTML =
+                    '<div class="review-card-header">' +
+                        '<span class="' + badgeClass + '">' + sentiment + '</span>' +
+                        (r.sub_category ? '<span style="color:#888;font-size:11px;">' + r.sub_category + '</span>' : '') +
+                    '</div>' +
+                    '<div class="review-text">' + displayText + '</div>';
+
+                listEl.appendChild(card);
+            });
+        })
+        .catch(err => {
+            if (err.name === 'AbortError') {
+                console.log('请求已中断（用户切换了筛选条件）');
+                return;
+            }
+            if (err.message && err.message.startsWith('HTTP_')) {
+                listEl.innerHTML = '<div class="review-status error">⚠️ 服务暂时不可用（状态码：' +
+                    err.message.replace('HTTP_', '') + '），请稍后重试</div>';
+            } else {
+                listEl.innerHTML = '<div class="review-status error">❌ 数据加载失败，请检查网络连接后重试</div>';
+            }
+            headerEl.innerHTML = '📋 评论列表';
+        });
+}
+
+// ============================================================
+// 搜索框防抖绑定
+// ============================================================
+const searchInput = document.getElementById('searchInput');
+const debouncedSearch = debounce(function(e) {
+    dashboardState.searchQuery = e.target.value.trim();
+    refreshAllCharts();
+}, 400);
+
+searchInput.addEventListener('input', debouncedSearch);
+
+// ============================================================
+// 窗口 resize 时，所有图表自适应
+// ============================================================
+window.addEventListener('resize', function() {
+    if (categoryChartInst) categoryChartInst.resize();
+    if (sentimentChartInst) sentimentChartInst.resize();
+    if (wordCloudChartInst) wordCloudChartInst.resize();
+});
+
+// ============================================================
+// 初始加载：渲染全部图表
+// ============================================================
+refreshAllCharts();
+</script>
+</body>
+</html>

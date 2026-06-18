@@ -1,0 +1,203 @@
+实验任务书：实验七  机器学习模型流式部署
+与实时打标
+所属课程：《⼤数据分析》
+所属⾥程碑： M2 （流批⼀体数据管道）
+实验学时： 2 学时
+⽀撑课程⽬标：⽬标 2 （现代⼯具栈应⽤）、⽬标 3 （架构思维与前沿技术）
+⼀、  实验背景与⽬的
+在实验六中，我们搭建了带背压防御的  Producer-Consumer 队列架构，并在任务  4 中将  scikit-learn 的
+预处理  Pipeline 嵌⼊消费者循环作为预演。⾄此，数据管道的 " 基础设施 " 已经就绪，但管道⾥流淌的数
+据还只是被搬运，没有被理解。
+从本周开始，管道将拥有 " 智能 "—— 我们要把离线训练好的机器学习模型嵌⼊消费者循环，让每⼀条流
+经管道的事件都能在毫秒内获得预测标签和置信度评分。这就是⼯业界所说的在线推理（ Online
+Inference ）或实时打标（ Real-time Scoring ）。
+本实验围绕 " 模型作为可部署⼯程资产 " 这⼀主线展开，学⽣需要完整⾛通从离线训练到在线服务的全部
+⼯程环节：
+1. 模型资产化流转：掌握  scikit-learn Pipeline 的序列化与反序列化机制（ joblib.dump  /
+ joblib.load ），理解模型⽂件作为 " 可部署⼯程资产 " 在训练环境与服务环境之间的传递逻辑。
+2. 离线 - 在线架构解耦：理解 " 离线批量训练 " 与 " 在线流式推理 " 在资源占⽤和⽣命周期上的本质差异，
+掌握模型加载位置的初始化隔离原则，并通过实验量化错误做法的性能代价。
+3. 端到端打标流⽔线：将模型推理集成到完整的  Producer-Consumer 管道中，实现真实数据的流式
+读取、实时打标和结果持久化，产出可供下游  M4 看板使⽤的带分数数据集。
+4. 模型服务的⼯程鲁棒性：处理流数据中不可避免的脏数据（字段缺失、类型异常），确保单条异常
+不会击垮整个推理服务。
+⼆、  实验准备
+1. 前序⼯程资产：实验六中带背压防御的   Producer-Consumer  多线程代码； M1 阶段产出的清洗后
+Parquet 数据集或课程主数据集   user_behavior_100M.csv 。
+2. AI 副驾：使⽤  AI 助⼿辅助  scikit-learn 模型训练脚本编写、异常处理逻辑设计及实验数据分析。
+三、  实验内容与步骤
+任务  1 ：离线训练与模型资产序列化
+在线推理的前提是拥有⼀个可部署的模型⽂件。本任务在  AI 辅助下完成模型训练、评估与序列化的完
+整流程。
+概念铺垫：为什么⽤  Pipeline ⽽不是单独的模型？
+你可能已经会⽤   StandardScaler  做标准化、⽤   RandomForestClassifier  做分类。但在部署
+时，如果  scaler 和  model 是两个独⽴对象，你需要分别保存、分别加载、分别调⽤ —— ⼀旦漏掉
+scaler 或⽤错了版本，推理结果就会出错。
+ sklearn.pipeline.Pipeline  的价值在于打包：把预处理和模型串成⼀条链， joblib.dump() 
+⼀次就把整条链存进⼀个   .pkl  ⽂件。在线推理时只需   joblib.load()  ⼀次，调⽤
+ pipeline.predict(raw_features)  就能⾃动完成 " 先预处理、再分类 " 的完整流程。这就是第七周
+理论课反复强调的 " 模型资产化 "—— ⼀个   .pkl  ⽂件就是⼀个可部署的完整推理单元。
+操作要求：
+1. 训练数据准备：从  M1 产出的清洗数据或   user_behavior_100M.csv  中提取训练样本。构造⼆分
+类标签（例如： behavior_type == 'buy'  为正样本，其余为负样本）。采样  1-5 万条⽤于训练。
+2. AI 辅助训练脚本编写：向  AI 提问：
+" 请基于以下电商⽇志字段（给出你的字段说明），帮我编写⼀个  scikit-learn 模型训练脚本
+ train_model.py 。要求： (1) 将所有预处理步骤（缺失值填充、类别编码、标准化）和分类器
+（ RandomForest 或  LogisticRegression ）封装在⼀条   sklearn.pipeline.Pipeline  中； (2)
+使⽤  5 折交叉验证评估模型性能； (3) 在脚本末尾使⽤   joblib.dump()  将训练好的  Pipeline
+保存为   model.pkl 。 "
+3. 训练执⾏与指标记录：运⾏训练脚本，记录以下信息（写⼊实验报告）：
+训练样本量与正负样本⽐例
+交叉验证的平均准确率（ Accuracy ）和  AUC 值
+⽣成的   model.pkl  ⽂件⼤⼩
+4. 资产验证：编写⼀段验证代码，加载   model.pkl  并对  3-5 条样本数据调⽤   predict()  和
+ predict_proba() ，确认模型⽂件可正常反序列化和推理。
+任务  2 ：模型加载策略 —— 初始化隔离原则
+将模型嵌⼊流处理循环时，在哪⾥加载模型是第⼀个必须解决的⼯程问题。本任务通过对⽐实验，让你
+亲身体会正确与错误做法的性能差距。
+操作要求：
+1. ⽅案  A （正确做法） —— 循环外⼀次性加载：在消费者脚本中，将模型加载逻辑置于处理循环之外
+（例如   __init__  ⽅法或全局初始化区域），模型对象常驻内存：
+# ✅  ⽅案  A ：⼀次性加载，常驻内存
+model = joblib.load('model.pkl')
+while True:
+    event = queue.get()
+    pred = model.predict(features)  # 直接使⽤内存中的模型
+2. ⽅案  B （错误做法） —— 循环内反复加载：故意将模型加载写在循环内部，模拟 " 每处理⼀条数据
+就重新加载模型 " 的场景：
+# ❌  ⽅案  B ：每条数据都重新触发磁盘  I/O
+while True:
+    event = queue.get()
+    model = joblib.load('model.pkl')  # 每次循环都重新加载！
+    pred = model.predict(features)
+3. 定量对⽐：分别⽤⽅案  A 和⽅案  B 处理  100 条数据，使⽤   time.perf_counter()  记录总耗时。
+将结果填⼊下表：
+⽅案 总耗时 每条平均耗时 模型加载次数
+A （循环外加载） ? ? 1
+B （循环内加载） ? ? 100
+4. 分析与记录：⽅案  B ⽐⽅案  A 慢了多少倍？这个性能差距的本质原因是什么？（提示：从磁盘  I/O
+延迟、对象序列化 / 反序列化开销、内存分配与回收等⻆度分析。）
+任务  3 ：端到端打标流⽔线 —— 从数据到智能
+本任务要求将模型推理完整集成到  Producer-Consumer 管道中，⽤真实数据跑通 " 读取  →  推理  →  结果
+持久化 " 的端到端闭环。
+操作要求：
+1. Producer 改造： Producer 从   user_behavior_100M.csv  逐⾏读取真实数据（复⽤实验六任务  4
+的   csv.DictReader  ⽅案），以可配置的速率推⼊队列。
+2. Consumer 推理逻辑：在消费者的   while True  循环中，每获取⼀条事件后：
+特征提取：从事件字典中提取模型所需字段，构造为  Pipeline 可接受的输⼊格式。这⼀步是容
+易卡住的地⽅ —— queue.get()  拿到的是⼀个字符串字典（如
+ {'user_id': '729255', 'timestamp': '1699356159', ...} ），⽽   model.predict()  需要
+⼀个数值型  DataFrame。你需要完成两个转换： (1) 类型转换：将字符串转为整数； (2) 特征衍
+⽣：从   timestamp  提取   hour  和   dayofweek 。示例：
+import pandas as pd
+ts = pd.Timestamp(int(event['timestamp']), unit='s')
+features = pd.DataFrame([{
+    'category_id': int(event['category_id']),
+    'hour': ts.hour,
+    'dayofweek': ts.dayofweek,
+    # ... 补充模型训练时使⽤的其他特征
+}])
+模型推理：调⽤   model.predict()  和   model.predict_proba()  获取预测结果。
+概念铺垫： predict 和  predict_proba 的区别
+ predict(X)  返回类别标签（ 0 或  1 ），即模型的 " 最终判决 "
+ predict_proba(X)  返回每个类别的概率，形状为   [[P( 类 0), P( 类 1)]] 。代码中的
+ [0][1]  意思是：取第  0 条样本的类别  1 （购买）概率。这个浮点数⽐  0/1 标签包含
+更多信息 —— 它告诉你模型对这次预测有多 " 确信 "
+结果回流：将预测标签和概率分数作为新字段追加到原始事件中：
+event['predicted_label'] = int(model.predict(features)[0])
+event['buy_probability'] = float(model.predict_proba(features)[0][1])
+终端展示：打印打标后的事件，确认每条输出都携带了预测字段。
+3. 结果持久化：将打标后的事件追加写⼊   scored_events.csv ，该⽂件将作为  M4 数据看板的数据
+源之⼀。 CSV 需包含原始字段  +  predicted_label  +  buy_probability 。
+4. 运⾏验证：启动完整管道，处理⾄少  500 条真实数据。在实验报告中：
+截图展示⾄少  10 条连续的终端打标输出。
+贴出   scored_events.csv  的前  10 ⾏。
+统计打标结果的分布：正样本（预测为购买）数量占⽐，平均购买概率。
+5. 异常容错（防御性编程）：真实数据中可能存在字段缺失或类型异常。在推理逻辑外层加⼊
+ try-except  保护，确保单条坏数据不会击垮消费者进程：
+while True:
+    event = queue.get()
+    try:
+        features = extract_features(event)
+        event['predicted_label'] = int(model.predict(features)[0])
+        event['buy_probability'] = float(model.predict_proba(features)[0][1])
+    except Exception as e:
+        event['predicted_label'] = -1   # 标记为推理失败
+        event['buy_probability'] = -1.0
+        event['error'] = str(e)
+在运⾏结束后检查：是否有记录被标记为推理失败？如果有，分析失败原因。
+任务  4 ： Micro-Batch 优化 —— 从逐条推理到批量打标
+任务  3 中，消费者对每条数据逐条调⽤   model.predict() 。在⼯业实践中，逐条推理的效率往往不是
+最优的 —— 因为每次   predict()  调⽤都有固定的函数调⽤开销（ NumPy 数组构造、类型检查等），⽽
+实际的矩阵运算成本相对极低。本任务要求实现  Micro-Batch 策略，将逐条推理升级为⼩批量推理。
+操作要求：
+1. Micro-Batch 消费者改造：修改消费者逻辑，不再逐条推理，⽽是从队列中累积   条数据后，合
+并为⼀个  DataFrame 批量调⽤   model.predict(batch_features) ：
+概念铺垫：代码中的两个新写法
+ queue.get(timeout=0.1) ：之前我们⽤的   queue.get()  会⼀直阻塞等到有数据为⽌；
+加了   timeout=0.1  后，如果  0.1 秒内没有新数据到来，就会抛出   queue.Empty  异常。
+我们⽤   try-except  捕获这个异常后跳过（ pass ），这样循环就不会被 " 卡死 " ，可以继
+续检查是否该触发超时刷新。
+双触发条件：推理的触发不是只看 " 攒满  B 条 " ，还有⼀个超时兜底。如果数据流速很慢
+（⽐如每  2 秒才来⼀条），永远攒不满  B 条， BATCH_TIMEOUT  保证积压的数据也能被及
+时处理，不会在  buﬀer ⾥⽆限等待。
+B
+BATCH_SIZE = 50
+BATCH_TIMEOUT = 0.5  # 秒：超时后强制推理已累积的数据
+buffer = []
+last_flush = time.time()
+while True:
+    try:
+        event = queue.get(timeout=0.1)
+        buffer.append(event)
+    except queue.Empty:
+        pass
+    
+    # 触发推理的两个条件：攒满  B 条  或  超时
+    if len(buffer) >= BATCH_SIZE or (buffer and time.time() - last_flush > BATCH_TIM
+        batch_features = extract_features_batch(buffer)
+        preds = model.predict(batch_features)
+        probs = model.predict_proba(batch_features)
+        for i, event in enumerate(buffer):
+            event['predicted_label'] = int(preds[i])
+            event['buy_probability'] = float(probs[i][1])
+        # 输出  / 持久化  buffer 中的所有事件
+        buffer.clear()
+        last_flush = time.time()
+2. 超时机制的⼯程意义：注意代码中的   BATCH_TIMEOUT —— 如果队列中数据流速很慢， buﬀer 可能
+⻓时间攒不满   条。 BATCH_TIMEOUT  确保即使数据稀疏，积压的事件也不会被⽆限延迟。在实验
+报告中回答：如果去掉   BATCH_TIMEOUT （即只按   BATCH_SIZE  触发），在低流量场景下会发⽣什
+么？
+3. 吞吐量对⽐：分别使⽤逐条推理（任务  3 ）和  Micro-Batch 推理（ ）处理  1000 条数据，
+记录总耗时和吞吐量：
+⽅案 总耗时 吞吐量（条 / 秒）
+逐条推理  (B=1) ? ?
+Micro-Batch (B=50) ? ?
+4. 思考： Micro-Batch 带来了吞吐量提升，但也引⼊了额外的推理延迟（最坏情况下，⼀条数据要等
+其余  B-1 条到⻬才能被推理）。在什么样的业务场景下，这种延迟是可以接受的？在什么场景下不
+⾏？（提示：推荐系统的召回  vs ⾦融⻛控的实时拦截。）
+B
+B=50
+四、  实验报告与验收要求
+1. 实验步骤与结果记录：
+模型训练摘要：记录训练样本量、正负⽐例、交叉验证指标（ Accuracy 、 AUC ）、 model.pkl 
+⽂件⼤⼩。
+初始化策略对⽐表（任务  2 ）：⽅案  A vs ⽅案  B 的耗时对⽐。
+端到端打标结果（任务  3 ）：
+终端打标输出截图（⾄少  10 条）
+ scored_events.csv  前  10 ⾏
+打标结果分布统计
+Micro-Batch 吞吐量对⽐表（任务  4 ）：逐条  vs B=50 的吞吐量数据。
+2. 💡  AI 协作思考题（不少于  300 字）：
+在完成本周实验后，请进⾏⼯程向的反思：
+模型热更新（ Hot Reload ）：在⼯业环境中，推荐模型需要每天甚⾄每⼩时重新训练并上线新
+版本。如果消费者进程不能停机，你打算如何在不中断流处理的情况下，将内存中的旧模型替
+换为新模型？请向  AI 了解 " 模型热加载 " 的常⻅⽅案，并简述你认为最可⾏的思路。
+重型模型的架构拆分：本周的  scikit-learn 树模型⾮常轻量（单次推理  < 1ms ）。假设流处理中
+需要调⽤⼀个单次推理耗时  1-2 秒的⼤型模型（如  LLM 或多媒体  AI 模型），我们当前的 " 模型
+直接嵌⼊  Consumer 本地 " 架构将完全失效。请向  AI 了解⼯业界的解耦⽅案（如  RPC 微服
+务、异步推理队列、 Model-as-a-Service ），并简述你认为最合理的架构调整⽅向。
+下周预告：
+⾄此， M2 的三项核⼼能⼒ —— 数据⽣产、背压防御、在线推理 —— 已全部实现。下周（实验⼋）
+将进⾏  Milestone 2 的联调测试与正式交付：将散装脚本封装为  CLI 驱动的⼯程⼊⼝，注⼊混沌测
+试验证系统鲁棒性，并输出项⽬级  README ⽂档。
